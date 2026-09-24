@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Alerts / n8n
     N8N_WEBHOOK_URL: str = ""
     N8N_WEBHOOK_SECRET: str = ""
+    # Dry run: build the payloads but do not send them; report a simulated success.
+    # The test suite enables it (tests/conftest.py); use it for demos without n8n.
+    N8N_DRY_RUN: bool = False
     ALERT_LANGUAGE: str = "es"
     ALERT_CHECK_INTERVAL_SECONDS: int = 900
     ALERT_OCCUPANCY_THRESHOLD_PCT: float = 85.0
