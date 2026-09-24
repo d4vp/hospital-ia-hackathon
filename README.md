@@ -329,10 +329,9 @@ with on-premise de-identification.
 
 | Name | Role |
 |---|---|
-| _Name_ | Team lead / product |
-| _Name_ | Backend & data engineering |
-| _Name_ | AI agent & prompt engineering |
-| _Name_ | Frontend, UX & accessibility |
+| Luis David Pinchao | Team lead / product |
+| Juan Jose Oviedo | Backend & data engineering |
+| Juan Camilo Delgado | Frontend, UX & accessibility |
 
 ## 12. Deployment
 
