@@ -1,10 +1,10 @@
-"""Home: data status, headline indicators, top alerts and the demo questions."""
+"""Home: alert ticker, data status, headline indicators and the demo questions."""
 import streamlit as st
 
 from core import api_client
 from core.i18n import fmt_num, lang, t
 from core.icons import page_header
-from core.ui import alert_card, api_call, metric, minutes
+from core.ui import alert_bar, api_call, metric, minutes
 
 page_header(t("nav_home"), "home", t("home_intro"))
 token = st.session_state["token"]
@@ -15,6 +15,7 @@ if not status:
 if not status.get("loaded"):
     st.info(t("no_data_loaded"))
     st.stop()
+alert_bar()
 st.caption(f"{t('data_until')}: {status['reference_date'][:16].replace('T', ' ')}")
 
 kpis = api_call(api_client.cached_get, "/kpis", token, lang=lang())
@@ -33,19 +34,9 @@ if kpis:
     with c4:
         metric(t("card_surgery"), f"{fmt_num(cards['surgery_completion_pct'])}%", t("of_scheduled"))
 
-left, right = st.columns([3, 2], gap="large")
-with left:
-    st.subheader(t("try_asking"))
-    for key in ("q1", "q2", "q3", "q4"):
-        if st.button(t(key), key=f"home_{key}", use_container_width=True, icon=":material/chat:"):
-            st.session_state["pending_question"] = t(key)
-            st.switch_page("views/agent.py")
-with right:
-    alerts = api_call(api_client.cached_get, "/alerts", token, lang=lang()) or []
-    st.subheader(f"{t('active_alerts')} ({len(alerts)})")
-    for alert in alerts[:4]:
-        alert_card(alert)
-    if not alerts:
-        st.caption(t("no_alerts"))
-    if st.button(t("see_all_alerts"), icon=":material/notifications:"):
-        st.switch_page("views/alerts.py")
+st.subheader(t("try_asking"))
+columns = st.columns(2, gap="medium")
+for i, key in enumerate(("q1", "q2", "q3", "q4")):
+    if columns[i % 2].button(f":material/chat: {t(key)}", key=f"home_{key}", use_container_width=True):
+        st.session_state["pending_question"] = t(key)
+        st.switch_page("views/agent.py")

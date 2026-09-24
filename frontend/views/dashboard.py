@@ -1,4 +1,4 @@
-"""Dashboard: filters, KPI cards, active alerts and six analysis tabs."""
+"""Dashboard: alert ticker, filters, KPI cards and six analysis tabs."""
 from datetime import date
 
 import pandas as pd
@@ -7,17 +7,18 @@ import streamlit as st
 from core import api_client
 from core.i18n import fmt_num, lang, t
 from core.icons import page_header
-from core.ui import alert_card, api_call, bar, line, metric, minutes, show_table
+from core.ui import alert_bar, api_call, bar, line, metric, minutes, show_table
 
 page_header(t("nav_dashboard"), "bar-chart")
 token = st.session_state["token"]
+alert_bar()
 
 options = api_call(api_client.cached_get, "/filters", token, lang=lang())
 if not options:
     st.stop()
 
 # ---------- Filters ----------
-with st.expander(t("filters"), expanded=True, key="dashboard_expander_filters"):
+with st.expander(t("filters"), expanded=True):
     f1, f2, f3 = st.columns([2, 1, 1])
     dmin, dmax = date.fromisoformat(options["date_min"]), date.fromisoformat(options["date_max"])
     period = f1.date_input(t("date_range"), value=(dmin, dmax), min_value=dmin, max_value=dmax, format="DD/MM/YYYY", key="dash_date_range")
@@ -46,16 +47,6 @@ with c4:
 with c5:
     metric(t("card_surgery"), f"{fmt_num(cards['surgery_completion_pct'])}%" if cards["surgery_completion_pct"] is not None else "—",
            t("of_scheduled"))
-
-# ---------- Alerts ----------
-alerts = api_call(api_client.cached_get, "/alerts", token, lang=lang()) or []
-with st.expander(f"{t('active_alerts')} ({len(alerts)})", expanded=bool(alerts), key="dashboard_expander_alerts"):
-    for alert in alerts[:6]:
-        alert_card(alert)
-    if len(alerts) > 6 and st.button(t("see_all_alerts")):
-        st.switch_page("views/alerts.py")
-    if not alerts:
-        st.caption(t("no_alerts"))
 
 # ---------- Tabs ----------
 tabs = st.tabs([t("tab_occupancy"), t("tab_waits"), t("tab_surgery"), t("tab_demand"), t("tab_meds"), t("tab_patients")])

@@ -9,4 +9,9 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "mongo": await ping(), "llm_enabled": settings.openai_enabled}
+    return {
+        "status": "ok",
+        "mongo": await ping(),
+        "llm_enabled": settings.openai_enabled,
+        "features": {"billing": settings.BILLING_ENABLED, "readonly_db_user": bool(settings.MONGO_READONLY_URI.strip())},
+    }

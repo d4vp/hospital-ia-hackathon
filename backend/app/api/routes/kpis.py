@@ -13,7 +13,7 @@ router = APIRouter(tags=["kpis"])
 
 @router.get("/filters")
 async def filters(_: CurrentUser, db=Depends(get_db)) -> dict:
-    return kpi_service.filter_options(await get_frames(db))
+    return await kpi_service.cached_filter_options(await get_frames(db))
 
 
 @router.get("/kpis")
@@ -25,7 +25,7 @@ async def kpis(
     bed_group: Optional[str] = Query(default=None, max_length=80),
     specialty: Optional[str] = Query(default=None, max_length=120),
 ) -> dict:
-    return kpi_service.dashboard(await get_frames(db), start, end, bed_group, specialty)
+    return await kpi_service.cached_dashboard(await get_frames(db), start, end, bed_group, specialty)
 
 
 @router.get("/patients")
@@ -40,4 +40,4 @@ async def patients(
     size: int = Query(default=50, ge=1, le=500),
 ) -> dict:
     """De-identified patient list: no name, document, birth date, chief complaint or specific diagnosis."""
-    return kpi_service.patients(await get_frames(db), start, end, bed_group, specialty, page, size)
+    return await kpi_service.cached_patients(await get_frames(db), start, end, bed_group, specialty, page, size)

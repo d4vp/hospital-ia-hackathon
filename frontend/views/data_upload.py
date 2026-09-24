@@ -32,7 +32,7 @@ if submitted and file is not None:
     if summary:
         _done(summary)
 
-if st.button(t("reload_button"), icon=":material/refresh:"):
+if st.button(f":material/refresh: {t('reload_button')}"):
     with st.spinner(t("processing")):
         summary = api_call(api_client.request, "POST", "/load-data", timeout=900)
     if summary:

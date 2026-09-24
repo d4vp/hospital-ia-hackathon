@@ -1,4 +1,4 @@
-"""FastAPI application: security middleware, routers, startup tasks and alert scheduler."""
+"""FastAPI application: security middleware, compression, routers, startup tasks and alert scheduler."""
 import asyncio
 import contextlib
 import logging
@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from pymongo import ASCENDING, DESCENDING
 
-from app.api.routes import alerts, auth, chat, data, health, kpis, reports, users
+from app.api.routes import alerts, auth, billing, chat, data, health, kpis, reports, users
 from app.core.config import COLLECTIONS, settings
 from app.core.logging_config import configure_logging
 from app.db.mongo import get_async_db
@@ -40,7 +41,9 @@ async def lifespan(_: FastAPI):
         await user_service.ensure_indexes(db)
         await db[COLLECTIONS["conversations"]].create_index([("updated_at", ASCENDING)], expireAfterSeconds=24 * 3600)
         await db[COLLECTIONS["agent_logs"]].create_index([("at", DESCENDING)])
-        await db[COLLECTIONS["alerts"]].create_index([("status", ASCENDING)])
+        await db[COLLECTIONS["alerts"]].create_index([("status", ASCENDING), ("workflow_status", ASCENDING)])
+        await db[COLLECTIONS["alert_history"]].create_index([("closed_at", DESCENDING)])
+        await db[COLLECTIONS["alert_history"]].create_index([("severity", ASCENDING), ("closed_at", DESCENDING)])
         await user_service.bootstrap_admin(db)
         if settings.ALERT_CHECK_INTERVAL_SECONDS > 0:
             task = asyncio.create_task(_alert_loop())
@@ -51,6 +54,7 @@ async def lifespan(_: FastAPI):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+    await alert_service.close_http_client()
 
 
 app = FastAPI(
@@ -60,12 +64,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# KPI, report and billing payloads are large JSON documents: compress them on the wire.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # Bearer tokens travel in the Authorization header, not cookies -> credentials are not needed.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH"],  # no PUT / DELETE anywhere in the API
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -85,5 +92,9 @@ async def dataset_not_loaded(_: Request, exc: DatasetNotLoadedError) -> JSONResp
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc), "code": "dataset_not_loaded"})
 
 
-for router in (health.router, auth.router, users.router, data.router, kpis.router, chat.router, alerts.router, reports.router):
+ROUTERS = [health.router, auth.router, users.router, data.router, kpis.router, chat.router, alerts.router,
+           reports.router]
+if settings.BILLING_ENABLED:  # optional module: absent from the API (and the docs) when disabled
+    ROUTERS.append(billing.router)
+for router in ROUTERS:
     app.include_router(router, prefix="/api")

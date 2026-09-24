@@ -8,6 +8,9 @@
    can fix the query.
 3. Answer generation: a second call writes ONLY natural language in the user's
    language from the sanitised rows.
+
+`db` is always the read-only facade (app.db.readonly): the agent has no way to write.
+System prompts are built once per ETL run (and language) instead of on every question.
 """
 from __future__ import annotations
 
@@ -22,6 +25,8 @@ from openai import AsyncOpenAI, OpenAIError
 from pymongo.errors import PyMongoError
 
 from app.core.config import settings
+from app.db.readonly import ReadOnlyViolation
+from app.services import cache
 from app.services.agent_prompt import QUERY_TOOL, build_answer_system_prompt, build_query_system_prompt
 from app.services.query_guard import QueryValidationError, execute_query
 
@@ -35,6 +40,27 @@ def get_client() -> AsyncOpenAI:
     if _client is None:
         _client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.OPENAI_TIMEOUT_SECONDS, max_retries=1)
     return _client
+
+
+_prompt_cache = cache.register(maxsize=16, ttl=settings.CACHE_TTL_SECONDS)
+
+
+def _cached_prompt(key: tuple, build) -> str:
+    prompt = _prompt_cache.get(key)
+    if cache.is_missing(prompt):
+        prompt = build()
+        _prompt_cache.set(key, prompt)
+    return prompt
+
+
+def query_system_prompt(metadata: dict, capacity: list[dict]) -> str:
+    return _cached_prompt(("query", str(metadata.get("etl_run_id"))),
+                          lambda: build_query_system_prompt(metadata, capacity))
+
+
+def answer_system_prompt(lang: str, metadata: dict, capacity: list[dict]) -> str:
+    return _cached_prompt(("answer", str(metadata.get("etl_run_id")), lang),
+                          lambda: build_answer_system_prompt(lang, metadata["reference_date"], capacity))
 
 
 class LLMUnavailableError(RuntimeError):
@@ -94,7 +120,7 @@ async def generate_and_run(db, question: str, history: list[dict], metadata: dic
     if not settings.openai_enabled:
         raise LLMUnavailableError("OPENAI_API_KEY is not configured")
 
-    messages = [{"role": "system", "content": build_query_system_prompt(metadata, capacity)}]
+    messages = [{"role": "system", "content": query_system_prompt(metadata, capacity)}]
     messages += _history_messages(history)
     messages.append({"role": "user", "content": question})
 
@@ -110,7 +136,7 @@ async def generate_and_run(db, question: str, history: list[dict], metadata: dic
             chart = arguments.get("chart")
             return AgentResult(answer="", rows=rows, query=arguments, chart=None if chart == "none" else chart,
                                explanation=arguments.get("explanation", ""), retried=attempt > 0, errors=errors)
-        except (QueryValidationError, PyMongoError) as exc:
+        except (QueryValidationError, ReadOnlyViolation, PyMongoError) as exc:
             errors.append(str(exc))
             logger.info("agent_query_rejected", extra={"data": {"attempt": attempt, "error": str(exc)}})
             if attempt == 1:
@@ -134,7 +160,7 @@ async def write_answer(question: str, result: AgentResult, lang: str, metadata: 
         response = await get_client().chat.completions.create(
             model=settings.OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": build_answer_system_prompt(lang, metadata["reference_date"], capacity)},
+                {"role": "system", "content": answer_system_prompt(lang, metadata, capacity)},
                 {"role": "user", "content": (
                     f"Question: {question}\nWhat the query computed: {result.explanation}\n"
                     f"Collection: {(result.query or {}).get('collection')}\n"
@@ -142,6 +168,7 @@ async def write_answer(question: str, result: AgentResult, lang: str, metadata: 
                 )},
             ],
             temperature=0.2,
+            max_tokens=settings.CHAT_MAX_ANSWER_TOKENS,
         )
     except OpenAIError as exc:
         raise LLMUnavailableError(str(exc)) from exc

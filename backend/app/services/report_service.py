@@ -12,8 +12,15 @@ Every section returns the numbers AND a plain-language conclusion.
    slope produces a predictive alert with a one-week forecast.
 5. Root cause of waiting time: day vs night (Mann-Whitney), triage levels
    (Kruskal-Wallis) and daily volume vs wait (Spearman).
+
+Reports are generated ON DEMAND: the caller names the sections it needs (`SECTIONS`
+registry) and only those are computed. Each section is memoized per ETL run and language,
+so asking for the same analysis again is instant.
 """
 from __future__ import annotations
+
+import asyncio
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -22,6 +29,7 @@ from scipy import stats
 from app.core.config import settings
 from app.core.i18n import chapter_label, fmt_date, fmt_number, t
 from app.services import analytics as an
+from app.services import cache
 from app.services.analytics import Frames
 
 ALPHA = 0.05
@@ -215,12 +223,51 @@ def root_cause_waits(frames: Frames, lang: str, days: int = 30) -> dict:
     return {"days": days, "findings": findings}
 
 
-def build_inferential_report(frames: Frames, lang: str) -> dict:
-    return {
-        "reference_date": frames.reference_date.isoformat(),
-        "wait_time_ci": wait_confidence_interval(frames, lang),
-        "occupancy_ci": occupancy_confidence_intervals(frames, lang),
-        "month_comparison": compare_months(frames, lang),
-        "trends": detect_trends(frames, lang),
-        "root_cause": root_cause_waits(frames, lang),
-    }
+# --------------------------------------------------------------------------- #
+# On-demand report assembly
+# --------------------------------------------------------------------------- #
+SECTIONS: dict[str, Callable[[Frames, str], Any]] = {
+    "wait_time_ci": wait_confidence_interval,
+    "occupancy_ci": occupancy_confidence_intervals,
+    "month_comparison": compare_months,
+    "trends": detect_trends,
+    "root_cause": root_cause_waits,
+}
+_report_cache = cache.register(maxsize=64, ttl=settings.CACHE_TTL_SECONDS)
+
+
+class UnknownSectionError(ValueError):
+    """A requested report section does not exist."""
+
+
+def resolve_sections(requested: Iterable[str]) -> tuple[str, ...]:
+    """Validates and de-duplicates the requested sections, keeping the catalogue order."""
+    wanted = {name.strip() for name in requested if name and name.strip()}
+    unknown = wanted - SECTIONS.keys()
+    if unknown:
+        raise UnknownSectionError(f"Unknown report sections: {sorted(unknown)}. Available: {list(SECTIONS)}")
+    return tuple(name for name in SECTIONS if name in wanted)
+
+
+def build_inferential_report(frames: Frames, lang: str, sections: Iterable[str] | None = None) -> dict:
+    """Synchronous builder (all sections by default). Used by scripts and tests."""
+    names = resolve_sections(sections) if sections is not None else tuple(SECTIONS)
+    report: dict[str, Any] = {"reference_date": frames.reference_date.isoformat()}
+    for name in names:
+        report[name] = SECTIONS[name](frames, lang)
+    return report
+
+
+async def build_report_on_demand(frames: Frames, lang: str, sections: Iterable[str]) -> dict:
+    """Computes ONLY the requested sections, each one memoized and run off the event loop."""
+    names = resolve_sections(sections)
+    if not names:
+        raise UnknownSectionError(f"Select at least one report section. Available: {list(SECTIONS)}")
+
+    async def section(name: str) -> Any:
+        return await cache.memoize(_report_cache, (frames.run_id, lang, name),
+                                   lambda: asyncio.to_thread(SECTIONS[name], frames, lang))
+
+    results = await asyncio.gather(*(section(name) for name in names))
+    return {"reference_date": frames.reference_date.isoformat(), "sections": list(names),
+            **dict(zip(names, results))}
