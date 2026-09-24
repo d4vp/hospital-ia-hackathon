@@ -4,6 +4,7 @@ import streamlit as st
 from core import api_client
 from core.i18n import fmt_num, lang, t
 from core.icons import page_header
+from core.loader import ambulance_loader
 from core.ui import alert_bar, api_call, metric, minutes
 
 page_header(t("nav_home"), "home", t("home_intro"))
@@ -18,7 +19,8 @@ if not status.get("loaded"):
 alert_bar()
 st.caption(f"{t('data_until')}: {status['reference_date'][:16].replace('T', ' ')}")
 
-kpis = api_call(api_client.cached_get, "/kpis", token, lang=lang())
+with ambulance_loader(t("loading_kpis")):
+    kpis = api_call(api_client.cached_get, "/kpis", token, lang=lang())
 if kpis:
     cards = kpis["cards"]
     c1, c2, c3, c4 = st.columns(4)

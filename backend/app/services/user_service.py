@@ -3,9 +3,14 @@
 - Passwords are hashed with bcrypt; hashes never leave this module.
 - A first admin is created from BOOTSTRAP_ADMIN_* only when the collection is empty.
 - Simple in-memory brute-force protection on login (5 failures / 15 minutes per email).
+- Root-access protection: the LAST active administrator can never be deactivated nor
+  demoted to "user" (by anyone, including another admin). The check and the write run
+  under a lock, and the result is re-verified after writing (compensating rollback), so
+  two admins demoting each other at the same time cannot leave the system without one.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -37,6 +42,15 @@ class UserError(ValueError):
 
 class LoginLockedError(RuntimeError):
     pass
+
+
+class LastAdminError(UserError):
+    """The change would leave the system without an active administrator."""
+
+
+LAST_ADMIN_MESSAGE = ("This is the only active administrator: it cannot be deactivated or changed to "
+                      "the 'user' role. Promote another user to administrator first.")
+_admin_guard = asyncio.Lock()
 
 
 def public_user(doc: dict) -> dict:
@@ -88,6 +102,9 @@ async def create_user(db, email: str, password: str, full_name: str, role: str) 
         "created_at": datetime.now(timezone.utc),
         "last_login_at": None,
     }
+    # Explicit check + unique index: duplicates are refused even if the index could not be built.
+    if await db[COLLECTIONS["users"]].count_documents({"email": doc["email"]}, limit=1):
+        raise UserError("A user with that email already exists")
     try:
         result = await db[COLLECTIONS["users"]].insert_one(doc)
     except DuplicateKeyError as exc:
@@ -97,8 +114,12 @@ async def create_user(db, email: str, password: str, full_name: str, role: str) 
 
 
 async def list_users(db) -> list[dict]:
+    """Users plus `is_last_admin`, so the UI can lock the controls that the API would refuse."""
     cursor = db[COLLECTIONS["users"]].find({}, {"password_hash": 0}).sort("created_at", ASCENDING)
-    return [public_user(d) async for d in cursor]
+    users = [d async for d in cursor]
+    sole_admin = [d for d in users if _is_active_admin(d)]
+    last_admin_id = sole_admin[0]["_id"] if len(sole_admin) == 1 else None
+    return [{**public_user(d), "is_last_admin": d["_id"] == last_admin_id} for d in users]
 
 
 def _object_id(user_id: str) -> ObjectId:
@@ -126,20 +147,45 @@ async def update_user(db, user_id: str, changes: dict[str, Any], acting_admin_id
     if changes.get("password"):
         validate_password_policy(changes["password"])
         update["password_hash"] = hash_password(changes["password"])
-    if str(oid) == acting_admin_id and (update.get("is_active") is False or update.get("role") == "user"):
-        raise UserError("You cannot deactivate or demote your own account")
-    if update.get("is_active") is False or update.get("role") == "user":
-        active_admins = await db[COLLECTIONS["users"]].count_documents({"role": "admin", "is_active": True, "_id": {"$ne": oid}})
-        target = await db[COLLECTIONS["users"]].find_one({"_id": oid})
-        if target and target["role"] == "admin" and active_admins == 0:
-            raise UserError("At least one active admin is required")
     if not update:
         raise UserError("Nothing to update")
+    removes_admin = update.get("is_active") is False or update.get("role") == "user"
+    if removes_admin and str(oid) == acting_admin_id:
+        raise UserError("You cannot deactivate or demote your own account")
     update["updated_at"] = datetime.now(timezone.utc)
+    if not removes_admin:
+        return public_user(await _apply(db, oid, update))
+    async with _admin_guard:  # serialises every change that can remove an administrator
+        target = await db[COLLECTIONS["users"]].find_one({"_id": oid})
+        if not target:
+            raise UserError("User not found")
+        if _is_active_admin(target) and await count_active_admins(db, exclude=oid) == 0:
+            raise LastAdminError(LAST_ADMIN_MESSAGE)
+        result = await _apply(db, oid, update)
+        if await count_active_admins(db) == 0:  # another process won a race: undo and refuse
+            await db[COLLECTIONS["users"]].update_one(
+                {"_id": oid}, {"$set": {"role": target["role"], "is_active": target.get("is_active", True)}})
+            logger.warning("last_admin_rollback", extra={"data": {"user_id": str(oid)}})
+            raise LastAdminError(LAST_ADMIN_MESSAGE)
+    return public_user(result)
+
+
+def _is_active_admin(doc: dict) -> bool:
+    return doc.get("role") == "admin" and doc.get("is_active", True)
+
+
+async def count_active_admins(db, exclude: Optional[ObjectId] = None) -> int:
+    query: dict[str, Any] = {"role": "admin", "is_active": True}
+    if exclude is not None:
+        query["_id"] = {"$ne": exclude}
+    return await db[COLLECTIONS["users"]].count_documents(query)
+
+
+async def _apply(db, oid: ObjectId, update: dict[str, Any]) -> dict:
     result = await db[COLLECTIONS["users"]].find_one_and_update({"_id": oid}, {"$set": update}, return_document=True)
     if not result:
         raise UserError("User not found")
-    return public_user(result)
+    return result
 
 
 async def authenticate(db, email: str, password: str) -> Optional[dict]:

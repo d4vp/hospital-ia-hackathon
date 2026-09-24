@@ -2,23 +2,24 @@
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.api.deps import AdminUser, get_db
+from app.api.models import StrictModel
 from app.core.security import PasswordPolicyError
 from app.services import user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-class UserCreate(BaseModel):
+class UserCreate(StrictModel):
     email: str = Field(max_length=254)
     full_name: str = Field(default="", max_length=120)
     password: str = Field(min_length=10, max_length=72)
     role: Literal["admin", "user"] = "user"
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(StrictModel):
     full_name: Optional[str] = Field(default=None, max_length=120)
     role: Optional[Literal["admin", "user"]] = None
     is_active: Optional[bool] = None
@@ -42,5 +43,7 @@ async def create_user(body: UserCreate, _: AdminUser, db=Depends(get_db)) -> dic
 async def update_user(user_id: str, body: UserUpdate, admin: AdminUser, db=Depends(get_db)) -> dict:
     try:
         return await user_service.update_user(db, user_id, body.model_dump(exclude_none=True), str(admin["_id"]))
+    except user_service.LastAdminError as exc:  # business rule, not a malformed request
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except (user_service.UserError, PasswordPolicyError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

@@ -12,6 +12,7 @@ import streamlit as st
 from core import api_client
 from core.i18n import lang, t
 from core.icons import page_header
+from core.loader import ambulance_loader
 from core.theme import palette
 from core.ui import api_call, conclusion, line
 
@@ -40,7 +41,7 @@ with st.form("report_request", border=True):
                             default=(st.session_state.get("report") or {}).get("sections", []))
     if st.form_submit_button(t("rep_generate"), type="primary"):
         if chosen:
-            with st.spinner(t("processing")):
+            with ambulance_loader(t("processing")):
                 fetch(chosen)
         else:
             st.warning(t("rep_choose_one"))

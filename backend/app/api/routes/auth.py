@@ -1,15 +1,16 @@
 """POST /api/auth/login, GET /api/auth/me"""
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.api.deps import CurrentUser, get_db
+from app.api.models import StrictModel
 from app.core.security import create_access_token
 from app.services import user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(StrictModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=128)
 

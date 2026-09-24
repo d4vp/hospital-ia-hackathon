@@ -28,6 +28,7 @@ from app.core.config import settings
 from app.db.readonly import ReadOnlyViolation
 from app.services import cache
 from app.services.agent_prompt import QUERY_TOOL, build_answer_system_prompt, build_query_system_prompt
+from app.services.data_repository import dataset_key
 from app.services.query_guard import QueryValidationError, execute_query
 
 logger = logging.getLogger("agent")
@@ -54,12 +55,12 @@ def _cached_prompt(key: tuple, build) -> str:
 
 
 def query_system_prompt(metadata: dict, capacity: list[dict]) -> str:
-    return _cached_prompt(("query", str(metadata.get("etl_run_id"))),
+    return _cached_prompt(("query", dataset_key(metadata)),
                           lambda: build_query_system_prompt(metadata, capacity))
 
 
 def answer_system_prompt(lang: str, metadata: dict, capacity: list[dict]) -> str:
-    return _cached_prompt(("answer", str(metadata.get("etl_run_id")), lang),
+    return _cached_prompt(("answer", dataset_key(metadata), lang),
                           lambda: build_answer_system_prompt(lang, metadata["reference_date"], capacity))
 
 

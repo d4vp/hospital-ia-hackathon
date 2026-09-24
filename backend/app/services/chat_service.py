@@ -37,7 +37,7 @@ from app.core.i18n import fmt_number, t
 from app.db.mongo import get_readonly_db
 from app.db.readonly import ReadOnlyViolation
 from app.services import cache, fallback_agent, mongo_agent
-from app.services.data_repository import DatasetNotLoadedError, get_capacity_docs, get_metadata
+from app.services.data_repository import DatasetNotLoadedError, dataset_key, get_capacity_docs, get_metadata
 from app.services.query_guard import QueryValidationError, screen_question
 from app.services.text_utils import normalize_text
 
@@ -184,7 +184,7 @@ async def ask(db, user: dict, question: str, conversation_id: Optional[str], lan
     metadata, history = await asyncio.gather(get_metadata(db), _load_history(db, conversation_id, user_id))
     if not metadata:
         raise DatasetNotLoadedError("No data loaded yet")
-    run_id = str(metadata.get("etl_run_id"))
+    run_id = dataset_key(metadata)
     reference_date: datetime = metadata["reference_date"]
     started = time.perf_counter()
 

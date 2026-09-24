@@ -5,6 +5,7 @@ import streamlit as st
 from core import api_client
 from core.i18n import t
 from core.icons import page_header
+from core.loader import ambulance_loader
 from core.ui import api_call, show_table
 
 if not api_client.is_admin():  # defence in depth: the API also enforces the admin role
@@ -17,6 +18,8 @@ page_header(t("nav_upload"), "upload", t("upload_intro"))
 def _done(summary: dict) -> None:
     st.cache_data.clear()
     st.success(t("load_done", n=summary["admissions_processed"], d=str(summary["reference_date"])[:16]))
+    if summary.get("app_records_replaced"):
+        st.warning(t("app_records_warning", n=summary["app_records_replaced"]))
     st.json(summary, expanded=False)
 
 
@@ -24,7 +27,7 @@ with st.form("upload", border=True):
     file = st.file_uploader(t("choose_file"), type=["xlsx"])
     submitted = st.form_submit_button(t("upload_button"), use_container_width=True)
 if submitted and file is not None:
-    with st.spinner(t("processing")):
+    with ambulance_loader(t("processing")):
         summary = api_call(api_client.request, "POST", "/upload-data",
                            files={"file": (file.name, file.getvalue(),
                                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
@@ -33,7 +36,7 @@ if submitted and file is not None:
         _done(summary)
 
 if st.button(f":material/refresh: {t('reload_button')}"):
-    with st.spinner(t("processing")):
+    with ambulance_loader(t("processing")):
         summary = api_call(api_client.request, "POST", "/load-data", timeout=900)
     if summary:
         _done(summary)

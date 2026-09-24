@@ -59,6 +59,24 @@ SHEETS = (
     "ProgramacionCirugia",
 )
 
+# Columns of each HIS sheet / SQL Server table (the ETL input contract). Records inserted from
+# the app are projected to MongoDB by running `transform` on rows with exactly these columns.
+SHEET_COLUMNS: dict[str, tuple[str, ...]] = {
+    "Paciente": ("IdPaciente", "TipoDocumento", "NombrePaciente", "FechaNacimiento", "Sexo", "Asegurador",
+                 "Regimen", "Departamento", "Municipio", "Zona"),
+    "Ingresos": ("OidIngreso", "ConsecutivoIngreso", "IdPaciente", "ClaseIngreso", "ViaIngreso", "TipoRiesgo",
+                 "FechaIngreso", "FechaHospitalizacion", "OidTriageA", "CodigoCama", "NombreCama", "NombreGrupoCama",
+                 "NombreSubgrupoCama", "CodigoDiagnostico", "NombreDiagnostico"),
+    "Triage": ("OidTriage", "IdPaciente2", "FechaTriage", "MotivoConsulta", "TensionArterial", "FrecuenciaCardiaca",
+               "FrecuenciaRespiratoria", "Temperatura", "CodigoTriage", "ClasificacionTriage"),
+    "Atencion": ("OidIngreso", "FechaAtencion"),
+    "Servicios": ("OidIngreso", "OidS", "CodigoServicio", "NombreServicio", "Cantidad", "FechaPrestacion",
+                  "CodigoAreaServicio", "AreaServicio", "Especialidad"),
+    "MedicamentoInsumo": ("OidIngreso", "OidMI", "CodigoServicio", "NombreServicio", "Cantidad", "FechaPrestacion",
+                          "AreaServicio", "Especialidad"),
+    "ProgramacionCirugia": ("ConsecutivoProgramacion", "IdPaciente", "OidIngreso", "CodigoServicio"),
+}
+
 ACTIVE_WINDOW = timedelta(hours=24)
 INVENTORY_WINDOW_DAYS = 30
 SYNTHETIC_SEED = 20260921
@@ -533,6 +551,9 @@ def write_bundle(db, bundle: DatasetBundle) -> dict:
         result = admissions.bulk_write(ops, ordered=False)
         upserted += result.upserted_count
         modified += result.modified_count
+    # Records created from the app that the workbook does not contain are replaced as well; the count
+    # is reported (in SQL Server mode the workbook, exported from SQL Server, already contains them).
+    app_replaced = admissions.count_documents({"etl_run_id": {"$ne": bundle.run_id}, "record_origin.system": "app"})
     removed = admissions.delete_many({"etl_run_id": {"$ne": bundle.run_id}}).deleted_count
 
     _replace_collection(db, COLLECTIONS["bed_capacity"], bundle.bed_capacity)
@@ -554,7 +575,10 @@ def write_bundle(db, bundle: DatasetBundle) -> dict:
     db[COLLECTIONS["inventory"]].create_index([("days_of_inventory", ASCENDING)])
     db[COLLECTIONS["medication_usage_daily"]].create_index([("date", ASCENDING), ("code", ASCENDING)])
     db[COLLECTIONS["service_demand_daily"]].create_index([("date", ASCENDING)])
-    return {"inserted": upserted, "updated": modified, "removed_stale": removed}
+    admissions.create_index([("services.service_date", ASCENDING)])
+    admissions.create_index([("medications.service_date", ASCENDING)])
+    admissions.create_index([("patient.patient_id", ASCENDING), ("admission_date", DESCENDING)])
+    return {"inserted": upserted, "updated": modified, "removed_stale": removed, "app_records_replaced": app_replaced}
 
 
 def load_excel_to_mongo(db=None, path: Optional[Path] = None) -> dict:

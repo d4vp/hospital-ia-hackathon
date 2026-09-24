@@ -7,6 +7,7 @@ import streamlit as st
 from core import api_client
 from core.i18n import fmt_num, lang, t
 from core.icons import page_header
+from core.loader import ambulance_loader
 from core.ui import alert_bar, api_call, bar, line, metric, minutes, show_table
 
 page_header(t("nav_dashboard"), "bar-chart")
@@ -27,7 +28,8 @@ with st.expander(t("filters"), expanded=True):
 start, end = (period if isinstance(period, tuple) and len(period) == 2 else (dmin, dmax))
 
 params = {"start": start.isoformat(), "end": end.isoformat(), "bed_group": bed_group, "specialty": specialty, "lang": lang()}
-data = api_call(api_client.cached_get, "/kpis", token, **params)
+with ambulance_loader(t("loading_kpis")):
+    data = api_call(api_client.cached_get, "/kpis", token, **params)
 if not data:
     st.stop()
 cards = data["cards"]
