@@ -1,0 +1,44 @@
+# Local / demo deployment. Secrets come from ./.env (never committed).
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"   # only reachable from this machine
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      DATA_DIR: /app/app/data
+    volumes:
+      - hospital_data:/app/app/data   # the workbook lives in a volume, never in the image
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://backend:8000/api
+      DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-es}
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  hospital_data:

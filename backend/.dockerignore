@@ -1,0 +1,14 @@
+**/.env
+**/.env.*
+!**/.env.example
+**/*.xlsx
+**/*.xls
+**/*.csv
+**/.venv
+**/venv
+**/source
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.git
+docs

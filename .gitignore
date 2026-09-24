@@ -1,0 +1,42 @@
+# ---- Python virtual environments (every name used in this project) ----
+.venv/
+venv/
+env/
+ENV/
+source/
+**/source/
+**/Scripts/python*.exe
+**/Lib/site-packages/
+pyvenv.cfg
+
+# ---- Secrets: never commit real environment files ----
+.env
+.env.*
+*.env
+!.env.example
+
+# ---- Hospital data: never commit source data (PHI / Ley 1581 de 2012) ----
+*.xlsx
+*.xls
+*.csv
+*.parquet
+backend/app/data/*
+!backend/app/data/README.md
+
+# ---- Python cache / tooling ----
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
