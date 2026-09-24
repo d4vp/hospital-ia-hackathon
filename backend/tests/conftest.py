@@ -21,6 +21,20 @@ def _fast_bcrypt(monkeypatch):
     monkeypatch.setattr(security, "BCRYPT_ROUNDS", 4)
 
 
+@pytest.fixture(autouse=True)
+async def _n8n_isolated(monkeypatch):
+    """No test talks to a real n8n, even if the developer's .env sets N8N_WEBHOOK_URL.
+
+    Dry run returns a simulated success; the pooled HTTP client is closed inside each test's
+    own event loop, so no socket or pending task outlives the loop pytest-asyncio closes.
+    """
+    from app.services import alert_service
+
+    monkeypatch.setattr(alert_service.settings, "N8N_DRY_RUN", True)
+    yield
+    await alert_service.close_http_client()
+
+
 def _make_db():
     uri = os.getenv("TEST_MONGO_URI")
     if uri:

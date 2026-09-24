@@ -221,22 +221,35 @@ def headline(alert: dict, lang: str) -> str:
 # --------------------------------------------------------------------------- #
 # n8n webhook
 # --------------------------------------------------------------------------- #
+# One pooled client per event loop. A pooled connection belongs to the loop that opened it:
+# reusing it from another loop (a new loop per test, a restarted worker) raises
+# "RuntimeError: Event loop is closed", so the client is recreated when the loop changes.
 _http: Optional[httpx.AsyncClient] = None
+_http_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _http_client() -> httpx.AsyncClient:
-    """One pooled client for every webhook call (no TLS handshake per alert)."""
-    global _http
-    if _http is None or _http.is_closed:
+    """Pooled client for the webhook calls of the running event loop (no TLS handshake per alert)."""
+    global _http, _http_loop
+    loop = asyncio.get_running_loop()
+    if _http is None or _http.is_closed or _http_loop is not loop or loop.is_closed():
+        # A client from a dead loop cannot be closed from here (its transports belong to that
+        # loop); it is dropped and garbage-collected.
         _http = httpx.AsyncClient(timeout=10.0)
+        _http_loop = loop
     return _http
 
 
 async def close_http_client() -> None:
-    global _http
-    if _http is not None:
-        await _http.aclose()
-        _http = None
+    """Closes the pooled client. Safe to call at any time, from any loop, more than once."""
+    global _http, _http_loop
+    client, owner = _http, _http_loop
+    _http, _http_loop = None, None
+    if client is None or client.is_closed:
+        return
+    current = asyncio.get_running_loop()
+    if owner is current and not current.is_closed():
+        await client.aclose()  # releases every pooled socket before the loop shuts down
 
 
 def telegram_text(alert: dict, lang: str) -> str:
@@ -260,17 +273,28 @@ def _alert_block(alert: dict, lang: str) -> dict:
 
 
 async def _post_to_n8n(payload: dict, key: str) -> Optional[str]:
-    """POSTs a payload to the n8n webhook. Returns an error string or None on success."""
+    """POSTs a payload to the n8n webhook. Returns an error string, or None on success.
+
+    Never raises: a notification failure must not break alert evaluation. Failures return an
+    error (the alert stays "not notified") — a real outage is never reported as a success.
+    With N8N_DRY_RUN (tests, demos) nothing is sent and a simulated success is returned.
+    """
     if not settings.N8N_WEBHOOK_URL:
         return "N8N_WEBHOOK_URL not configured"
+    if settings.N8N_DRY_RUN:
+        logger.info("n8n_dry_run", extra={"data": {"key": key, "event": payload.get("event")}})
+        return None
     headers = {"X-Webhook-Secret": settings.N8N_WEBHOOK_SECRET} if settings.N8N_WEBHOOK_SECRET else {}
     try:
         response = await _http_client().post(settings.N8N_WEBHOOK_URL, json=payload, headers=headers)
         response.raise_for_status()
         return None
-    except httpx.HTTPError as exc:
-        logger.warning("n8n_webhook_failed", extra={"data": {"key": key, "event": payload.get("event"), "error": str(exc)}})
-        return str(exc)
+    except (httpx.HTTPError, RuntimeError) as exc:  # RuntimeError: loop closed during shutdown
+        if isinstance(exc, RuntimeError):
+            await close_http_client()  # never reuse a client whose loop went away
+        logger.warning("n8n_webhook_failed", extra={"data": {
+            "key": key, "event": payload.get("event"), "error": f"{type(exc).__name__}: {exc}"}})
+        return f"{type(exc).__name__}: {exc}"
 
 
 async def send_to_n8n(alert: dict, lang: str) -> Optional[str]:
