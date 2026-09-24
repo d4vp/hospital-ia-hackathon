@@ -3,15 +3,17 @@
 GET   /api/alerts                active alerts (finalized ones are excluded)
 GET   /api/alerts/summary        counts by severity / status + one short line per alert (ticker)
 GET   /api/alerts/history        closed alerts: finalized by staff or resolved by the data
+GET   /api/alerts/events         state history: every status transition (who, when, from -> to)
 PATCH /api/alerts/{key}          workflow transition: reviewed | in_progress | finalized
 POST  /api/alerts/evaluate       admin: re-evaluate the rules and notify n8n
 """
 from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.api.deps import AdminUser, CurrentUser, Language, get_db
+from app.api.models import StrictModel
 from app.core.config import settings
 from app.services import alert_service
 from app.services.alert_service import WorkflowStatus
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 Severity = Literal["critical", "high", "medium"]
 
 
-class StatusChange(BaseModel):
+class StatusChange(StrictModel):
     status: Literal["reviewed", "in_progress", "finalized"]
     note: str = Field(default="", max_length=500)
 
@@ -47,6 +49,16 @@ async def history(
     alert_type: Optional[str] = Query(default=None, alias="type", max_length=40, pattern=r"^[a-z_]+$"),
 ) -> list[dict]:
     return await alert_service.alert_history(db, lang, limit, severity, reason, alert_type)
+
+
+@router.get("/events")
+async def events(
+    _: CurrentUser,
+    db=Depends(get_db),
+    limit: int = Query(default=200, ge=1, le=1000),
+    key: Optional[str] = Query(default=None, max_length=200),
+) -> list[dict]:
+    return await alert_service.alert_events(db, limit, key)
 
 
 @router.post("/evaluate")

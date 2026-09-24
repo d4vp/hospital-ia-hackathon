@@ -10,23 +10,24 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from pymongo import ASCENDING, DESCENDING
 
-from app.api.routes import alerts, auth, billing, chat, data, health, kpis, reports, users
+from app.api.routes import alerts, auth, billing, chat, data, health, integrations, kpis, records, reports, users
 from app.core.config import COLLECTIONS, settings
 from app.core.logging_config import configure_logging
+from app.core.shield import RequestShieldMiddleware
 from app.db.mongo import get_async_db
 from app.services import alert_service, user_service
+from app.services.records import service as records_service
 from app.services.data_repository import DatasetNotLoadedError
 
 logger = logging.getLogger("app")
 
 
-async def _alert_loop() -> None:
-    interval = settings.ALERT_CHECK_INTERVAL_SECONDS
+async def _periodic(name: str, interval: int, job) -> None:
     while True:
         try:
-            await alert_service.evaluate_and_notify(get_async_db())
+            await job(get_async_db())
         except Exception:  # noqa: BLE001 - the scheduler must survive any failure
-            logger.exception("alert_loop_failed")
+            logger.exception(f"{name}_failed")
         await asyncio.sleep(interval)
 
 
@@ -36,21 +37,28 @@ async def lifespan(_: FastAPI):
     db = get_async_db()
     if settings.insecure_jwt_secret:
         logger.warning("insecure_jwt_secret: set a random JWT_SECRET of at least 32 characters")
-    task = None
+    tasks: list[asyncio.Task] = []
     try:
         await user_service.ensure_indexes(db)
         await db[COLLECTIONS["conversations"]].create_index([("updated_at", ASCENDING)], expireAfterSeconds=24 * 3600)
         await db[COLLECTIONS["agent_logs"]].create_index([("at", DESCENDING)])
         await db[COLLECTIONS["alerts"]].create_index([("status", ASCENDING), ("workflow_status", ASCENDING)])
         await db[COLLECTIONS["alert_history"]].create_index([("closed_at", DESCENDING)])
+        await db[COLLECTIONS["alert_events"]].create_index([("at", DESCENDING)])
+        await db[COLLECTIONS["alert_events"]].create_index([("alert_key", ASCENDING), ("at", DESCENDING)])
         await db[COLLECTIONS["alert_history"]].create_index([("severity", ASCENDING), ("closed_at", DESCENDING)])
         await user_service.bootstrap_admin(db)
+        await db[COLLECTIONS["sync_outbox"]].create_index([("status", ASCENDING), ("created_at", ASCENDING)])
         if settings.ALERT_CHECK_INTERVAL_SECONDS > 0:
-            task = asyncio.create_task(_alert_loop())
+            tasks.append(asyncio.create_task(_periodic(
+                "alert_loop", settings.ALERT_CHECK_INTERVAL_SECONDS, alert_service.evaluate_and_notify)))
+        if settings.SYNC_RETRY_INTERVAL_SECONDS > 0:  # records waiting to reach MongoDB
+            tasks.append(asyncio.create_task(_periodic(
+                "sync_retry_loop", settings.SYNC_RETRY_INTERVAL_SECONDS, records_service.retry_pending)))
     except Exception:  # noqa: BLE001 - start the API even if Mongo is still booting
         logger.exception("startup_tasks_failed")
     yield
-    if task:
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -77,14 +85,9 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Cache-Control"] = "no-store"
-    return response
+# Outermost layer (added last): hostile requests are rejected before CORS, routing or auth run.
+# It also adds the security headers and X-Request-ID to every response.
+app.add_middleware(RequestShieldMiddleware)
 
 
 @app.exception_handler(DatasetNotLoadedError)
@@ -93,7 +96,7 @@ async def dataset_not_loaded(_: Request, exc: DatasetNotLoadedError) -> JSONResp
 
 
 ROUTERS = [health.router, auth.router, users.router, data.router, kpis.router, chat.router, alerts.router,
-           reports.router]
+           reports.router, records.router, integrations.router]
 if settings.BILLING_ENABLED:  # optional module: absent from the API (and the docs) when disabled
     ROUTERS.append(billing.router)
 for router in ROUTERS:

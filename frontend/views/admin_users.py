@@ -38,13 +38,16 @@ with right:
         st.subheader(t("edit_user"))
         # Outside the form so the fields below refresh when another user is selected.
         selected = st.selectbox(t("select_user"), users, format_func=lambda u: f"{u['email']} ({value_label(u['role'])})")
+        locked = bool(selected.get("is_last_admin"))  # the API refuses these changes too (409)
+        if locked:
+            st.info(t("last_admin_locked"))
         with st.form(f"edit_user_{selected['id']}", border=True):
             new_role = st.radio(t("role"), ["user", "admin"], index=0 if selected["role"] == "user" else 1,
-                                format_func=value_label, horizontal=True)
-            active = st.toggle(t("active"), value=selected["is_active"])
+                                format_func=value_label, horizontal=True, disabled=locked)
+            active = st.toggle(t("active"), value=selected["is_active"], disabled=locked)
             new_password = st.text_input(t("new_password"), type="password", help=t("password_rule"))
             if st.form_submit_button(t("save_changes"), use_container_width=True):
-                changes = {"role": new_role, "is_active": active}
+                changes = {} if locked else {"role": new_role, "is_active": active}
                 if new_password:
                     changes["password"] = new_password
                 if api_call(api_client.patch, f"/users/{selected['id']}", changes):

@@ -96,8 +96,9 @@ def alert_card(alert: dict) -> None:
     if alert.get("workflow_note"):
         footer.append(f"“{alert['workflow_note']}”")
     footer_html = f'<p class="muted"><small>{escape(" · ".join(footer))}</small></p>' if footer else ""
+    attended = " attended" if alert.get("workflow_status") == "in_progress" else ""
     st.markdown(
-        f'<div class="alert-card sev-{severity}" role="status">'
+        f'<div class="alert-card sev-{severity}{attended}" role="status">'
         f'<span class="sev">{svg("alert", 18)}{escape(t("severity_" + severity))}</span>'
         f'{workflow_badge(alert.get("workflow_status"))}'
         f'<p>{escape(alert["message"])}</p><p class="rec">{escape(alert.get("recommendation", ""))}</p>'
@@ -109,25 +110,29 @@ def alert_card(alert: dict) -> None:
 def _ticker_item(item: dict) -> str:
     severity = item.get("severity", "medium")
     figure = f" · {escape(item['headline'])}" if item.get("headline") else ""
-    return (f'<span class="item sev-{severity}"><b>{escape(t("severity_" + severity))}</b>'
+    attended = "" if item.get("pending", True) else " attended"
+    return (f'<span class="item sev-{severity}{attended}"><b>{escape(t("severity_" + severity))}</b>'
             f'{escape(item.get("subject") or "")}{figure}'
             f'<span class="st">· {escape(t("workflow_" + (item.get("workflow_status") or "new")))}</span></span>')
 
 
 def alert_ticker(summary: Optional[dict]) -> None:
-    """Top-of-page alert bar: counters by severity + a horizontally sliding list of alerts.
+    """Top-of-page alert bar: PENDING counters by severity, an "in progress" counter and a
+    horizontally sliding list of alerts (pending first; attended ones are dimmed).
 
-    Only the relevant figure of each alert is shown; the full detail lives on the Alerts page.
-    The slide pauses on hover/focus, stops with prefers-reduced-motion, and the track can
-    always be scrolled by hand.
+    Counters only include alerts nobody is attending yet, so they go down as soon as staff
+    move an alert to "En progreso". The slide pauses on hover/focus, stops with
+    prefers-reduced-motion, and the track can always be scrolled by hand.
     """
-    summary = summary or {"by_severity": {}, "items": []}
-    counts = summary.get("by_severity", {})
+    summary = summary or {"pending_by_severity": {}, "items": []}
+    counts = summary.get("pending_by_severity", summary.get("by_severity", {}))
+    in_progress = int(summary.get("in_progress", 0))
     chips = "".join(
-        f'<span class="count sev-{sev}{" zero" if not counts.get(sev) else ""}">'
+        f'<span class="count sev-{sev}{" zero" if not counts.get(sev) else ""}" title="{escape(t("pending_hint"))}">'
         f'{svg("alert", 15)}{escape(t("count_" + sev))} {int(counts.get(sev, 0))}</span>'
         for sev in SEVERITIES
-    )
+    ) + (f'<span class="count wip{" zero" if not in_progress else ""}">{svg("activity", 15)}'
+         f'{escape(t("workflow_in_progress"))} {in_progress}</span>')
     items = summary.get("items", [])
     if items:
         row = "".join(_ticker_item(item) for item in items)

@@ -7,6 +7,7 @@ import jwt
 
 from app.core.config import settings
 
+BCRYPT_ROUNDS = 12  # production cost; the test suite lowers it (see tests/conftest.py)
 MIN_PASSWORD_LENGTH = 10
 MAX_PASSWORD_BYTES = 72  # bcrypt hard limit
 
@@ -25,7 +26,7 @@ def validate_password_policy(password: str) -> None:
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:

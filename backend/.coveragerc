@@ -1,0 +1,12 @@
+[run]
+source = app
+branch = False
+
+[report]
+fail_under = 90
+show_missing = True
+skip_covered = True
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    \.\.\.$

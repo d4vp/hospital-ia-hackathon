@@ -126,7 +126,12 @@ h3 {{ font-size: 1.15rem; font-weight: 700; }}
 .wf-badge {{ display:inline-block; margin-left:.5rem; padding:.05rem .55rem; border-radius:999px; font-size:.85rem;
              font-weight:700; border:{border_w} solid var(--border); color: var(--ink); background: var(--surface); }}
 .wf-new {{ border-color: var(--sev, var(--primary)); }}
-.wf-in_progress {{ border-color: var(--primary); color: var(--primary); }}
+.wf-in_progress {{ border-color: var(--primary); background: var(--primary); color: var(--on-primary) !important; }}
+.wf-reviewed {{ border-style: dashed; }}
+/* Attended alert: stays visible, clearly marked, visually de-emphasised */
+.alert-card.attended {{ border-left-style: double; opacity: .92; }}
+.alert-ticker .count.wip {{ --sev: var(--primary); --sev-bg: var(--surface); }}
+.alert-ticker .item.attended {{ opacity: .6; border-left-style: dashed; }}
 
 /* Floating accessibility menu (the app's ONLY popover): small pill at the top-right corner */
 [data-testid="stPopover"] {{ position: fixed; top: .55rem; right: 3.6rem; z-index: 999991; width: auto !important; }}

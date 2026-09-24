@@ -11,6 +11,7 @@ import streamlit as st
 from core import api_client
 from core.i18n import fmt_num, lang, t
 from core.icons import page_header
+from core.loader import ambulance_loader
 from core.ui import api_call, bar, line, metric, show_table
 
 if not api_client.is_admin():  # defence in depth: the API also enforces the admin role
@@ -32,7 +33,8 @@ start, end = period if isinstance(period, tuple) and len(period) == 2 else (dmin
 params = {"start": start.isoformat(), "end": end.isoformat()}
 
 # The unfiltered summary also carries the insurer list for the filter (both cached server-side).
-overall = api_call(api_client.cached_get, "/billing/summary", token, **params)
+with ambulance_loader():
+    overall = api_call(api_client.cached_get, "/billing/summary", token, **params)
 if not overall:
     st.stop()
 insurer = f2.selectbox(t("insurer"), [None, *overall["insurers"]], format_func=lambda v: v or t("all"),

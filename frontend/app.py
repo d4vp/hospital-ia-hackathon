@@ -81,6 +81,8 @@ else:
             st.Page("views/data_upload.py", title=t("nav_upload"), icon=":material/upload_file:", url_path="data-upload"),
             st.Page("views/admin_users.py", title=t("nav_users"), icon=":material/manage_accounts:", url_path="users"),
         ]
+        admin_pages.insert(0, st.Page("views/records.py", title=t("nav_records"), icon=":material/edit_note:",
+                                      url_path="records"))
         if api_client.features().get("billing"):  # optional module, switched on/off in the backend
             admin_pages.insert(0, st.Page("views/billing.py", title=t("nav_billing"), icon=":material/receipt_long:",
                                           url_path="billing"))

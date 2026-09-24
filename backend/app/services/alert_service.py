@@ -10,7 +10,11 @@ Flow
 3. A background task runs step 2 every ALERT_CHECK_INTERVAL_SECONDS and after each ETL.
 
 Attention workflow (per alert):  new -> reviewed -> in_progress -> finalized
-- Every transition is recorded (who, when, optional note) and sent to n8n.
+- Attending an alert = moving it to "in_progress": it stays in the active view (never
+  deleted) with a clear "En progreso" status, and stops counting as PENDING, so the
+  pending-critical counters of the dashboard go down as staff attend alerts.
+- Every transition is recorded in the alert (`workflow_log`), in the `alert_events` log
+  (state history across alerts) and sent to n8n.
 - Finalized alerts leave the active view and are copied to `alert_history`; while the
   condition persists they stay silenced, unless the severity escalates (then they reopen).
 - Alerts whose condition disappears are archived as "resolved".
@@ -172,6 +176,8 @@ ALLOWED_TRANSITIONS: dict[WorkflowStatus, frozenset[WorkflowStatus]] = {
     WorkflowStatus.IN_PROGRESS: frozenset({WorkflowStatus.FINALIZED}),
     WorkflowStatus.FINALIZED: frozenset(),
 }
+# Not attended yet: these are the alerts that count as "pending" on the dashboard.
+PENDING_STATUSES = frozenset({WorkflowStatus.NEW, WorkflowStatus.REVIEWED})
 CLOSED_FINALIZED = "finalized"
 CLOSED_RESOLVED = "resolved"
 
@@ -397,7 +403,7 @@ async def evaluate_and_notify(db) -> dict:
 
 
 _WORKFLOW_PROJECTION = {"first_seen": 1, "notified_at": 1, "workflow_status": 1, "workflow_updated_at": 1,
-                        "workflow_updated_by": 1, "workflow_note": 1}
+                        "workflow_updated_by": 1, "workflow_note": 1, "workflow_log": 1}
 
 
 async def active_alerts(db, lang: str) -> list[dict]:
@@ -418,6 +424,7 @@ async def active_alerts(db, lang: str) -> list[dict]:
             first_seen=doc.get("first_seen"), notified=bool(doc.get("notified_at")), workflow_status=status.value,
             workflow_updated_at=doc.get("workflow_updated_at"), workflow_updated_by=doc.get("workflow_updated_by"),
             workflow_note=doc.get("workflow_note"), headline=headline(alert, lang),
+            workflow_log=doc.get("workflow_log") or [], pending=status in PENDING_STATUSES,
             next_statuses=[s.value for s in WorkflowStatus if s in ALLOWED_TRANSITIONS[status]],
         )
         visible.append(alert)
@@ -425,16 +432,27 @@ async def active_alerts(db, lang: str) -> list[dict]:
 
 
 async def alerts_summary(db, lang: str) -> dict:
-    """Compact payload for the alert ticker: counts plus one short line per alert."""
+    """Compact payload for the alert bar.
+
+    `pending_by_severity` only counts alerts nobody is attending yet (new / reviewed): it
+    decreases as soon as an alert is moved to "in_progress". `in_progress` counts the
+    alerts being attended. Pending alerts are listed first.
+    """
     alerts = await active_alerts(db, lang)
     by_severity = {severity: 0 for severity in SEVERITY_ORDER}
+    pending_by_severity = {severity: 0 for severity in SEVERITY_ORDER}
     by_status = {status.value: 0 for status in WorkflowStatus if status is not WorkflowStatus.FINALIZED}
     for alert in alerts:
         by_severity[alert["severity"]] = by_severity.get(alert["severity"], 0) + 1
         by_status[alert["workflow_status"]] = by_status.get(alert["workflow_status"], 0) + 1
-    items = [{k: alert.get(k) for k in ("key", "type", "severity", "subject", "headline", "workflow_status")}
-             for alert in alerts]
-    return {"total": len(alerts), "by_severity": by_severity, "by_status": by_status, "items": items}
+        if alert["pending"]:
+            pending_by_severity[alert["severity"]] = pending_by_severity.get(alert["severity"], 0) + 1
+    ordered = sorted(alerts, key=lambda a: (not a["pending"], SEVERITY_ORDER.get(a["severity"], 9)))
+    items = [{k: alert.get(k) for k in ("key", "type", "severity", "subject", "headline", "workflow_status", "pending")}
+             for alert in ordered]
+    return {"total": len(alerts), "pending": sum(pending_by_severity.values()),
+            "in_progress": by_status[WorkflowStatus.IN_PROGRESS.value], "by_severity": by_severity,
+            "pending_by_severity": pending_by_severity, "by_status": by_status, "items": items}
 
 
 async def _ensure_stored(db, key: str) -> Optional[dict]:
@@ -475,6 +493,10 @@ async def change_status(db, key: str, new_status: WorkflowStatus, actor: str, no
         raise InvalidTransitionError("The alert was updated by someone else; reload and try again")
     doc.update(workflow_status=new_status.value, workflow_updated_at=now, workflow_updated_by=actor,
                workflow_note=note or None, workflow_log=[*(doc.get("workflow_log") or []), entry])
+    await db[COLLECTIONS["alert_events"]].insert_one({
+        "alert_key": key, "type": doc.get("type"), "severity": doc.get("severity"), "subject": doc.get("subject"),
+        "from_status": current.value, "to_status": new_status.value, "by": actor, "at": now, "note": note,
+    })
     if new_status is WorkflowStatus.FINALIZED:
         await db[COLLECTIONS["alert_history"]].insert_one(_history_entry(doc, CLOSED_FINALIZED, now, actor))
     logger.info("alert_status_changed", extra={"data": {"key": key, "from": current.value,
@@ -501,3 +523,10 @@ async def alert_history(db, lang: str, limit: int = 100, severity: Optional[str]
             query[field] = value
     cursor = db[COLLECTIONS["alert_history"]].find(query, {"data": 0}).sort("closed_at", -1).limit(limit)
     return [public_alert(doc, lang) async for doc in cursor]
+
+
+async def alert_events(db, limit: int = 200, key: Optional[str] = None) -> list[dict]:
+    """State history: every workflow transition (who, when, from -> to, note), newest first."""
+    query: dict[str, Any] = {"alert_key": key} if key else {}
+    cursor = db[COLLECTIONS["alert_events"]].find(query, {"_id": 0}).sort("at", -1).limit(limit)
+    return [_jsonable(doc) async for doc in cursor]

@@ -65,6 +65,33 @@ class Settings(BaseSettings):
     ALERT_TRIAGE2_WAIT_THRESHOLD_MIN: float = 30.0
     ALERT_SURGERY_COMPLETION_THRESHOLD_PCT: float = 70.0
 
+    # Request shield (app/core/shield.py)
+    API_MAX_JSON_BYTES: int = 64 * 1024
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_MIN: int = 300
+    RATE_LIMIT_AGENT_PER_MIN: int = 30
+    RATE_LIMIT_LOGIN_PER_MIN: int = 20
+    RATE_LIMIT_WRITE_PER_MIN: int = 60
+
+    # n8n AI agent integration: shared secret sent by n8n in `X-Integration-Key`.
+    # Empty = the /api/integrations endpoints are disabled. At least 32 characters.
+    INTEGRATION_API_KEY: str = ""
+
+    # SQL Server (hospital system of record). Empty host = "mongo_only" mode: records inserted
+    # from the app go only to MongoDB (ids from a separate range, see records_service).
+    SQLSERVER_HOST: str = ""
+    SQLSERVER_PORT: int = 1433
+    SQLSERVER_DATABASE: str = "HIS"
+    SQLSERVER_USER: str = ""
+    SQLSERVER_PASSWORD: str = ""
+    SQLSERVER_SCHEMA: str = "dbo"
+    SQLSERVER_TIMEOUT_SECONDS: int = 15
+
+    # Records inserted from the app
+    HOSPITAL_TIMEZONE: str = "America/Bogota"
+    RECORDS_MAX_BACKDATE_DAYS: int = 30
+    SYNC_RETRY_INTERVAL_SECONDS: int = 120
+
     LOG_LEVEL: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -106,6 +133,24 @@ class Settings(BaseSettings):
         except (ValueError, TypeError, AttributeError):
             return {"services": {}, "medications": {}}
 
+    @field_validator("SQLSERVER_SCHEMA")
+    @classmethod
+    def _safe_identifier(cls, value: str) -> str:
+        """The schema is interpolated into SQL identifiers: only [A-Za-z0-9_] is accepted."""
+        import re
+
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", value):
+            raise ValueError("SQLSERVER_SCHEMA must be a plain identifier")
+        return value
+
+    @property
+    def sqlserver_enabled(self) -> bool:
+        return bool(self.SQLSERVER_HOST.strip())
+
+    @property
+    def integration_enabled(self) -> bool:
+        return len(self.INTEGRATION_API_KEY.strip()) >= 32
+
     @property
     def openai_enabled(self) -> bool:
         return bool(self.OPENAI_API_KEY.strip())
@@ -133,6 +178,9 @@ COLLECTIONS = {
     "users": "users",
     "alerts": "alerts",
     "alert_history": "alert_history",
+    "alert_events": "alert_events",
+    "counters": "counters",
+    "sync_outbox": "sync_outbox",
     "conversations": "conversations",
     "agent_logs": "agent_logs",
 }

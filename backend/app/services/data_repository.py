@@ -28,6 +28,15 @@ _metadata_cache = cache.register(maxsize=4, ttl=settings.METADATA_CACHE_TTL_SECO
 _capacity_cache = cache.register(maxsize=4, ttl=settings.CACHE_TTL_SECONDS)
 
 
+def dataset_key(metadata: dict) -> str:
+    """Version of the dataset: ETL run + revision (bumped by every record inserted from the app).
+
+    Every dataset-derived cache (frames, KPIs, alerts, reports, chat answers, prompts) is keyed
+    by it, so inserted records become visible everywhere, in every process.
+    """
+    return f"{metadata.get('etl_run_id')}:{int(metadata.get('revision') or 0)}"
+
+
 async def get_metadata(db) -> Optional[dict]:
     key = getattr(db, "name", "")
     metadata = _metadata_cache.get(key)
@@ -50,7 +59,7 @@ async def get_frames(db) -> Frames:
     metadata = await get_metadata(db)
     if not metadata:
         raise DatasetNotLoadedError("No data loaded yet. An administrator must upload the workbook first.")
-    run_id = str(metadata.get("etl_run_id"))
+    run_id = dataset_key(metadata)
     if run_id in _cache:
         return _cache[run_id]
     async with _lock:
@@ -69,6 +78,7 @@ async def get_frames(db) -> Frames:
         )
         # pandas work runs in a worker thread so other requests keep being served meanwhile.
         frames = await asyncio.to_thread(frames_from_documents, admissions, capacity, inventory, usage, demand, metadata)
+        frames.run_id = run_id
         _cache.clear()
         _cache[run_id] = frames
         return frames

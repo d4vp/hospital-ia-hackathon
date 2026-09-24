@@ -16,3 +16,5 @@ openai==1.58.1
 httpx==0.28.1
 PyJWT==2.10.1
 bcrypt==4.2.1
+# SQL Server (system of record) driver; self-contained wheel, no ODBC driver needed. Imported lazily.
+pymssql==2.3.2
