@@ -31,6 +31,29 @@ MESSAGES: dict[str, dict[str, str]] = {
         "es": "Esa pregunta está fuera del alcance de los datos operativos del hospital.",
         "en": "That question is outside the scope of the hospital's operational data.",
     },
+    "guard_write_command": {
+        "es": "No puedo hacer eso: el asistente tiene acceso de SOLO LECTURA a los datos del hospital. "
+              "No es posible insertar, modificar ni eliminar información. Puedo ayudarte con consultas, "
+              "por ejemplo: «¿Cuántas camas de UCI están ocupadas hoy?».",
+        "en": "I can't do that: the assistant has READ-ONLY access to the hospital data. Inserting, "
+              "changing or deleting information is not possible. I can help with questions such as "
+              "“How many ICU beds are occupied today?”.",
+    },
+    "guard_prompt_injection": {
+        "es": "Tu mensaje intenta cambiar las reglas del asistente, así que no lo procesé. "
+              "Formula una pregunta sobre la operación del hospital.",
+        "en": "Your message tries to change the assistant's rules, so it was not processed. "
+              "Please ask a question about hospital operations.",
+    },
+    # ---------- Alert workflow ----------
+    "workflow_new": {"es": "Nueva", "en": "New"},
+    "workflow_reviewed": {"es": "Revisada", "en": "Reviewed"},
+    "workflow_in_progress": {"es": "En progreso", "en": "In progress"},
+    "workflow_finalized": {"es": "Finalizada", "en": "Finalized"},
+    "alert_status_changed": {
+        "es": "Alerta «{subject}» marcada como {status} por {actor}.",
+        "en": "Alert “{subject}” marked as {status} by {actor}.",
+    },
     # ---------- Plan B answers ----------
     "fb_occupancy_group": {
         "es": "Al {date}, {group} tiene {occupied} camas ocupadas de {beds} ({pct}% de ocupación estimada).",

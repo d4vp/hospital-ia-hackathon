@@ -1,4 +1,6 @@
-"""Accessible visual themes: light, dark and high contrast, plus adjustable text size.
+"""Accessible visual themes: light, dark and high contrast.
+
+Text size follows the browser / OS zoom (no in-app font scaling, which broke layouts).
 
 Typography: Atkinson Hyperlegible (Braille Institute) — designed to maximise character
 recognition for readers with low vision. Palette derived from the hospital's greens.
@@ -38,13 +40,11 @@ def palette() -> dict:
     return PALETTES.get(st.session_state.get("theme", "light"), PALETTES["light"])
 
 
-def font_scale() -> float:
-    return float(st.session_state.get("font_scale", 1.0))
+THEMES = ("light", "dark", "high_contrast")
 
 
 def apply_theme() -> None:
     p = palette()
-    scale = font_scale()
     hc = st.session_state.get("theme") == "high_contrast"
     border_w = "2px" if hc else "1px"
     st.markdown(
@@ -54,7 +54,6 @@ def apply_theme() -> None:
 :root {{ --bg:{p['bg']}; --surface:{p['surface']}; --ink:{p['ink']}; --muted:{p['muted']};
          --primary:{p['primary']}; --on-primary:{p['on_primary']}; --accent:{p['accent']};
          --border:{p['border']}; --focus:{p['focus']}; }}
-html {{ font-size: {16 * scale:.1f}px; }}
 html, body, .stApp, .stApp * {{ font-family: 'Atkinson Hyperlegible', 'Segoe UI', Roboto, Arial, sans-serif; }}
 .stApp [data-testid="stIconMaterial"], .stApp .material-symbols-rounded {{ font-family: 'Material Symbols Rounded' !important; }}
 .stApp {{ background: var(--bg); color: var(--ink); }}
@@ -124,35 +123,72 @@ h3 {{ font-size: 1.15rem; font-weight: 700; }}
 .sev-critical {{ --sev: {p['critical']}; --sev-bg: {p['critical_bg']}; }}
 .sev-high {{ --sev: {p['high']}; --sev-bg: {p['high_bg']}; }}
 .sev-medium {{ --sev: {p['medium']}; --sev-bg: {p['medium_bg']}; }}
+.wf-badge {{ display:inline-block; margin-left:.5rem; padding:.05rem .55rem; border-radius:999px; font-size:.85rem;
+             font-weight:700; border:{border_w} solid var(--border); color: var(--ink); background: var(--surface); }}
+.wf-new {{ border-color: var(--sev, var(--primary)); }}
+.wf-in_progress {{ border-color: var(--primary); color: var(--primary); }}
+
+/* Floating accessibility menu (the app's ONLY popover): small pill at the top-right corner */
+[data-testid="stPopover"] {{ position: fixed; top: .55rem; right: 3.6rem; z-index: 999991; width: auto !important; }}
+[data-testid="stPopover"] > div > button, [data-testid="stPopoverButton"] {{
+  min-height: 2.2rem; padding: .15rem .8rem; border-radius: 999px; font-size: .9rem;
+  background: var(--surface); color: var(--ink); border: {border_w} solid var(--border);
+  box-shadow: 0 2px 8px rgba(0,0,0,.12); }}
+[data-testid="stPopoverBody"] {{ background: var(--surface) !important; color: var(--ink); min-width: 15rem; }}
+
+/* Alert ticker: counters + horizontally sliding list (pauses on hover/focus, scrollable by hand) */
+.alert-ticker {{ display:flex; align-items:center; gap:.6rem; background: var(--surface);
+                 border:{border_w} solid var(--border); border-radius:10px; padding:.45rem .6rem; margin:.2rem 0 .8rem 0;
+                 min-height: 2.9rem; }}
+.alert-ticker .counts {{ display:flex; gap:.4rem; flex:0 0 auto; }}
+.alert-ticker .count {{ display:inline-flex; align-items:center; gap:.3rem; padding:.15rem .6rem; border-radius:999px;
+                        font-weight:700; color: var(--sev); background: var(--sev-bg); border:{border_w} solid var(--sev);
+                        white-space:nowrap; font-size:.92rem; }}
+.alert-ticker .count.zero {{ opacity:.55; }}
+.alert-ticker .track {{ flex:1 1 auto; overflow-x:auto; overflow-y:hidden; white-space:nowrap; scrollbar-width:thin;
+                        mask-image: linear-gradient(90deg, transparent 0, #000 1.2rem, #000 calc(100% - 1.2rem), transparent 100%); }}
+.alert-ticker .items {{ display:inline-flex; gap:.5rem; padding: 0 1rem; }}
+.alert-ticker .items.moving {{ animation: ticker var(--ticker-duration, 40s) linear infinite; }}
+.alert-ticker .track:hover .items, .alert-ticker .track:focus-within .items, .alert-ticker .track:focus .items {{
+  animation-play-state: paused; }}
+.alert-ticker .item {{ display:inline-flex; align-items:center; gap:.35rem; padding:.15rem .6rem; border-radius:8px;
+                       border-left:4px solid var(--sev); background: var(--sev-bg); font-size:.92rem; }}
+.alert-ticker .item b {{ color: var(--sev); }}
+.alert-ticker .item .st {{ color: var(--muted); font-size:.82rem; }}
+.alert-ticker .empty {{ color: var(--muted); }}
+@keyframes ticker {{ from {{ transform: translateX(0); }} to {{ transform: translateX(-50%); }} }}
 .conclusion {{ background: var(--surface); border: {border_w} solid var(--border); border-left: 5px solid var(--primary);
                border-radius: 8px; padding: .8rem 1rem; margin: .4rem 0 .8rem 0; max-width: 78ch; }}
 
 /* Responsive: phones and small tablets */
 @media (max-width: 640px) {{
-  .block-container {{ padding: 1.2rem .8rem 4rem .8rem; }}
+  .block-container {{ padding: 3.8rem .8rem 4rem .8rem; }}
   h1 {{ font-size: 1.55rem; }}
   [data-testid="stMetricValue"] {{ font-size: 1.5rem; }}
   .page-header svg {{ width: 26px; height: 26px; }}
+  [data-testid="stPopover"] {{ right: 3.2rem; }}
+  .alert-ticker {{ flex-wrap: wrap; }}
+  .alert-ticker .track {{ flex-basis: 100%; }}
 }}
 @media (prefers-reduced-motion: reduce) {{ .stApp * {{ animation: none !important; transition: none !important; }} }}
 </style>
 """,
         unsafe_allow_html=True,
     )
-    _register_plotly_template(p, scale)
+    _register_plotly_template(p)
 
 
-def _register_plotly_template(p: dict, scale: float) -> None:
+def _register_plotly_template(p: dict) -> None:
     template = go.layout.Template()
     template.layout = go.Layout(
-        font={"family": "Atkinson Hyperlegible, Segoe UI, Arial, sans-serif", "size": round(14 * scale), "color": p["ink"]},
+        font={"family": "Atkinson Hyperlegible, Segoe UI, Arial, sans-serif", "size": 14, "color": p["ink"]},
         paper_bgcolor=p["surface"], plot_bgcolor=p["surface"], colorway=p["chart"],
         xaxis={"gridcolor": p["border"], "linecolor": p["ink"], "zerolinecolor": p["border"], "automargin": True},
         yaxis={"gridcolor": p["border"], "linecolor": p["ink"], "zerolinecolor": p["border"], "automargin": True},
         legend={"orientation": "h", "yanchor": "top", "y": -0.18, "x": 0},
         margin={"l": 10, "r": 10, "t": 50, "b": 10},
-        hoverlabel={"font": {"size": round(14 * scale)}},
-        title={"font": {"size": round(17 * scale)}},
+        hoverlabel={"font": {"size": 14}},
+        title={"font": {"size": 17}},
     )
     pio.templates["hospital"] = template
     pio.templates.default = "hospital"

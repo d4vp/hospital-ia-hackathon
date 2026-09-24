@@ -5,7 +5,7 @@ Column names of the lean admissions frame (see `frames_from_documents`):
 
 admission_id, admission_date, admission_class, admission_route, wait_minutes, shift,
 estimated_discharge_date, currently_admitted, primary_specialty, surgeries_scheduled,
-surgeries_performed, bed_group, triage_level, sex, age_group, regime,
+surgeries_performed, bed_group, triage_level, sex, age_group, regime, insurer,
 diagnosis_chapter, length_of_stay_days
 """
 from __future__ import annotations
@@ -24,12 +24,12 @@ LEAN_ADMISSION_PROJECTION = {
     "wait_minutes": 1, "shift": 1, "estimated_discharge_date": 1, "currently_admitted": 1,
     "primary_specialty": 1, "surgeries_scheduled": 1, "surgeries_performed": 1,
     "bed.group": 1, "triage.level": 1, "patient.sex": 1, "patient.age_group": 1,
-    "patient.regime": 1, "diagnosis.chapter": 1, "length_of_stay_days": 1,
+    "patient.regime": 1, "patient.insurer": 1, "diagnosis.chapter": 1, "length_of_stay_days": 1,
 }
 _RENAME = {
     "_id": "admission_id", "bed.group": "bed_group", "triage.level": "triage_level",
     "patient.sex": "sex", "patient.age_group": "age_group", "patient.regime": "regime",
-    "diagnosis.chapter": "diagnosis_chapter",
+    "patient.insurer": "insurer", "diagnosis.chapter": "diagnosis_chapter",
 }
 
 

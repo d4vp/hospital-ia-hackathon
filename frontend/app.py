@@ -1,4 +1,4 @@
-"""Streamlit entry point: session, accessibility settings, login and role-based navigation."""
+"""Streamlit entry point: session, accessibility menu, login and role-based navigation."""
 import os
 
 import streamlit as st
@@ -8,7 +8,7 @@ from core import api_client
 from core.api_client import ApiError
 from core.i18n import LANGUAGES, t
 from core.icons import page_header, svg
-from core.theme import apply_theme
+from core.theme import THEMES, apply_theme
 
 try:
     st.set_page_config(page_title="Hospital Susana López de Valencia", page_icon=":material/local_hospital:",
@@ -19,23 +19,25 @@ except StreamlitAPIException:
 # ---------- Session defaults ----------
 st.session_state.setdefault("lang", os.getenv("DEFAULT_LANGUAGE", "es") if os.getenv("DEFAULT_LANGUAGE") in LANGUAGES else "es")
 st.session_state.setdefault("theme", "light")
-st.session_state.setdefault("font_scale", 1.0)
+st.session_state.pop("font_scale", None)  # text size now follows the browser zoom
 
 apply_theme()
 
 
-def accessibility_panel() -> None:
+def accessibility_menu() -> None:
+    """Small floating menu at the top-right corner (see `[data-testid="stPopover"]` in theme.py)."""
+    with st.popover(f":material/settings_accessibility: {t('a11y_title')}"):
+        st.radio(t("language"), options=list(LANGUAGES), format_func=LANGUAGES.get, key="lang", horizontal=True)
+        st.radio(t("theme"), options=THEMES, format_func=lambda v: t(f"theme_{v}"), key="theme")
+
+
+def sidebar() -> None:
     with st.sidebar:
         st.markdown(
             f'<div class="brand">{svg("cross", 30)}<div><strong>{t("app_name")}</strong>'
             f'<small>{t("app_tagline")}</small></div></div>',
             unsafe_allow_html=True,
         )
-        with st.expander(t("a11y_title"), expanded=False, key="expander_accessibility"):
-            st.radio(t("language"), options=list(LANGUAGES), format_func=LANGUAGES.get, key="lang", horizontal=True)
-            st.radio(t("theme"), options=["light", "dark", "high_contrast"], format_func=lambda v: t(f"theme_{v}"),
-                     key="theme")
-            st.slider(t("font_size"), min_value=0.9, max_value=1.6, step=0.1, key="font_scale", format="%.1fx")
         user = st.session_state.get("user")
         if user:
             st.caption(f"{t('signed_in_as')}: **{user.get('full_name') or user['email']}** · {t('role_' + user['role'])}")
@@ -59,7 +61,8 @@ def login_view() -> None:
     st.caption(t("login_help"))
 
 
-accessibility_panel()
+accessibility_menu()
+sidebar()
 
 if not st.session_state.get("token"):
     navigation = st.navigation([st.Page(login_view, title=t("nav_login"), icon=":material/login:", url_path="login")])
@@ -74,10 +77,14 @@ else:
         ],
     }
     if api_client.is_admin():  # non-admins never see (or can reach) these pages
-        pages[t("section_admin")] = [
+        admin_pages = [
             st.Page("views/data_upload.py", title=t("nav_upload"), icon=":material/upload_file:", url_path="data-upload"),
             st.Page("views/admin_users.py", title=t("nav_users"), icon=":material/manage_accounts:", url_path="users"),
         ]
+        if api_client.features().get("billing"):  # optional module, switched on/off in the backend
+            admin_pages.insert(0, st.Page("views/billing.py", title=t("nav_billing"), icon=":material/receipt_long:",
+                                          url_path="billing"))
+        pages[t("section_admin")] = admin_pages
     navigation = st.navigation(pages)
 
 navigation.run()

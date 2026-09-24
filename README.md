@@ -22,9 +22,13 @@ and where patients wait too long.
 | Dashboard | Occupancy (now + daily trend), waiting time by triage and shift, surgeries performed vs scheduled, demand by specialty/area, top and lowest-turnover medications, low stock, de-identified patient table, filters by date/service/specialty. |
 | Data loading | Admin-only upload of the `.xlsx`; vectorised ETL (~10 s transform) with encoding repair and stale-record removal. |
 | Recommendations / predictive alerts | Rule engine (occupancy, stock-outs, ER waits, triage 2 target, surgery completion) + trend detection with a one-week forecast. |
-| Telegram | New alerts are POSTed to an n8n webhook, which sends them to Telegram. |
-| Security | JWT auth with `admin`/`user` roles, recursive query guard, mandatory PII projection, maxTimeMS, upload limits, no secrets in the repo. |
-| Accessibility | Spanish/English switch, light / dark / high-contrast themes, adjustable text size, Atkinson Hyperlegible font, colour-blind-safe charts, responsive layout. |
+| Alert management | Sliding alert bar at the top of Home and Dashboard (counts by severity + one short line per alert). Workflow per alert: *nueva → revisada → en progreso → finalizada*, with who/when/note; finalized and auto-resolved alerts move to a searchable history. |
+| Reports | Generated **on demand**: the user picks the analyses and only those are computed (each cached per dataset). Conclusions downloadable as Markdown. |
+| Billing (optional) | Admin-only module (`BILLING_ENABLED`): billable services/medications by insurer, regime, month and item; estimated amounts when `BILLING_TARIFFS` is configured. |
+| Telegram | New alerts and workflow changes are POSTed to an n8n webhook, which sends them to Telegram. |
+| Security | JWT auth with `admin`/`user` roles, **strictly read-only AI agent** (input screen + whitelists + read-only DB facade + optional read-only Mongo user), mandatory PII projection, maxTimeMS, upload limits, no secrets in the repo. Generated queries are never shown to any role. |
+| Performance | Per-ETL-run in-memory caches (KPIs, alerts, report sections, billing, prompts, repeated chat questions) with single-flight loading, pandas work off the event loop, concurrent Mongo reads and n8n calls, gzip responses. |
+| Accessibility | Floating top-right menu with Spanish/English switch and light / dark / high-contrast themes; text size follows the browser zoom. Atkinson Hyperlegible font, colour-blind-safe charts, responsive layout. |
 
 ## 2. Architecture
 
@@ -131,7 +135,9 @@ Follow-up example: after Q1, *“¿y en pediatría?”* → 83 of 92 beds (90.2 
 | Capability | user | admin |
 |---|:-:|:-:|
 | Agent, dashboard, reports, alerts | ✔ | ✔ |
-| Technical detail of agent answers (generated query, errors) | | ✔ |
+| Change the status of an alert (revisada / en progreso / finalizada), alert history | ✔ | ✔ |
+| See generated database queries | — | — (never shown; server-side audit log only) |
+| Billing module (optional) | | ✔ |
 | Upload / reload data | | ✔ |
 | Create, edit, deactivate users | | ✔ |
 | Force alert evaluation + n8n notification | | ✔ |
@@ -141,7 +147,16 @@ The first admin is created from `BOOTSTRAP_ADMIN_*` when the `users` collection 
 ## 7. Alerts to Telegram with n8n
 
 The backend sends a `POST` to `N8N_WEBHOOK_URL` **only when an alert becomes active**
-(it does not repeat active alerts). Header `X-Webhook-Secret: <N8N_WEBHOOK_SECRET>`.
+(it does not repeat active alerts) and whenever staff change its status. Header
+`X-Webhook-Secret: <N8N_WEBHOOK_SECRET>`.
+
+**Alert workflow.** `PATCH /api/alerts/{key}` with `{"status": "reviewed" | "in_progress" | "finalized", "note": "…"}`
+(forward-only: nueva → revisada → en progreso → finalizada). Finalized alerts leave the active
+view and are copied to `alert_history` (`GET /api/alerts/history`); they stay silenced while the
+condition persists and reopen only if the severity escalates. Alerts whose condition disappears
+are archived as *resolved*. `GET /api/alerts/summary` feeds the alert bar.
+
+New alert (`event = hospital_alert`):
 
 ```json
 {
@@ -155,6 +170,11 @@ The backend sends a `POST` to `N8N_WEBHOOK_URL` **only when an alert becomes act
   "telegram_text": "[MEDIA] Hospital Susana López de Valencia\n…"
 }
 ```
+
+Status change (`event = hospital_alert_status`): same `alert` block plus
+`"status": {"value": "finalized", "label": "Finalizada", "by": "Ana", "note": "…", "at": "…"}` and a
+ready-to-send `telegram_text` ("Alerta «PEDIATRIA» marcada como Finalizada por Ana."). The flow
+below forwards both events unchanged; add an **IF** on `{{$json.body.event}}` to route them differently.
 
 **Flow to build in n8n** (or import `docs/n8n-workflow.json`):
 
@@ -180,10 +200,29 @@ The backend sends a `POST` to `N8N_WEBHOOK_URL` **only when an alert becomes act
 * **Remove the Excel and `.env` from git history** and make the repository **private**:
   follow [`docs/REPO_CLEANUP.md`](docs/REPO_CLEANUP.md) (`git filter-repo`). The workbook holds
   clinical free text (Ley 1581 de 2012, Resolución 1995 de 1999).
-* Query guard (`query_guard.py`): collection whitelist; recursive deny-list (`$where`,
-  `$function`, `$accumulator`, `$lookup`, `$graphLookup`, `$unionWith`, `$out`, `$merge`,
-  `$collStats`, `$currentOp`, …) inside `$expr`, `$group`, `$facet`, `$elemMatch` and
-  `find` filters; field-existence validation; `maxTimeMS`; row limit.
+* **The AI agent is read-only by construction** (four independent layers):
+  1. *Input screen* (`query_guard.screen_question`): questions containing Mongo shell/driver
+     write calls (`db.x.deleteMany(`, `insertOne(`…), update operators (`$set`, `$inc`…), SQL DDL/DML
+     (`DROP TABLE`, `DELETE FROM`…), imperative requests to modify data ("borra los registros…")
+     or prompt-injection attempts are answered with a fixed message **before** the LLM or the
+     database are touched.
+  2. *Query guard* (`validate_query`): operation whitelist (`find`, `aggregate`), top-level key
+     whitelist, **pipeline stage whitelist** (also inside `$facet`; `$set`/`$unset`/`$out`/`$merge`
+     are rejected), recursive deny-list of write and dangerous operators (`$inc`, `$rename`,
+     `$where`, `$function`, `$lookup`, `$unionWith`, `$collStats`…) at any depth, collection
+     whitelist, field-existence validation, `maxTimeMS`, row limit.
+  3. *Read-only facade* (`app/db/readonly.py`): the agent and Plan B receive a database handle
+     that only exposes `find`, `find_one`, `aggregate`, `count_documents` and `distinct` on the five
+     analytical collections; every write/admin method raises before reaching the driver.
+  4. *Database role* (recommended in production): set `MONGO_READONLY_URI` to a MongoDB user
+     that only has the built-in `read` role; agent queries then run on that connection, so the
+     server itself refuses any write:
+     ```js
+     db.getSiblingDB("admin").createUser({user: "hospital_agent", pwd: "<strong-password>",
+       roles: [{role: "read", db: "hospital_susana_lopez"}]})
+     ```
+* Generated queries are never returned by the API nor shown in the UI, for any role; they are
+  kept only in the server-side audit log (`agent_logs`).
 * Mandatory PII protection: `patient.name`, `patient.birth_date`, `patient.patient_id`,
   `triage.chief_complaint`, `diagnosis.code`, `diagnosis.name` can never be referenced, are
   projected out of every query and stripped again from results **before** they reach OpenAI
@@ -239,13 +278,14 @@ Deployed links: _frontend_ · _backend `/docs`_
 ```
 backend/app/
   core/        config, security (JWT/bcrypt), i18n messages, JSON logging
-  db/          Mongo clients
+  db/          Mongo clients, read-only facade for the AI agent (readonly.py)
   api/         dependencies (auth/roles) and routes
   services/    data_loader, query_guard, schema_catalog, agent_prompt, mongo_agent,
                fallback_agent, chat_service, analytics, kpi_service, alert_service,
-               report_service, user_service, data_repository, text_utils
+               report_service, billing_service, user_service, data_repository, cache, text_utils
   scripts/     load_data, create_admin
-backend/tests/ demo questions, query guard, ETL, intents
+backend/tests/ demo questions, query guard, read-only guarantees, alert workflow, reports,
+               billing, chat/API contract, ETL, intents
 frontend/      app.py, core/ (i18n, theme, icons, api_client, ui), views/
 docs/          REPO_CLEANUP.md, MIGRATION_GUIDE.md, n8n-workflow.json
 ```

@@ -64,6 +64,21 @@ def cached_get(path: str, token: str, **params) -> Any:
     return get(path, **params)
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def live_get(path: str, token: str, **params) -> Any:
+    """Short-lived cache for data that staff change (alerts): cleared after every status update."""
+    return get(path, **params)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def features() -> dict:
+    """Optional modules enabled on the backend (public /health endpoint)."""
+    try:
+        return (request("GET", "/health", timeout=5) or {}).get("features", {})
+    except ApiError:
+        return {}
+
+
 def login(email: str, password: str) -> dict:
     data = request("POST", "/auth/login", json={"email": email, "password": password})
     st.session_state["token"] = data["access_token"]

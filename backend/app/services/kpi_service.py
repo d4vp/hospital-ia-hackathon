@@ -1,12 +1,40 @@
-"""Dashboard payload built from the cached analytical frames (see analytics.py)."""
+"""Dashboard payload built from the cached analytical frames (see analytics.py).
+
+The `cached_*` coroutines are what the routes call: results are memoized per ETL run and
+filter combination, and the pandas work runs in a worker thread so a heavy dashboard never
+blocks the event loop (chat, alerts and health keep answering meanwhile).
+"""
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Optional
 
 from app.core.config import settings
 from app.services import analytics as an
+from app.services import cache
 from app.services.analytics import Frames
+
+_kpi_cache = cache.register(maxsize=256, ttl=settings.CACHE_TTL_SECONDS)
+
+
+async def cached_filter_options(frames: Frames) -> dict:
+    return await cache.memoize(_kpi_cache, ("filters", frames.run_id),
+                               lambda: asyncio.to_thread(filter_options, frames))
+
+
+async def cached_dashboard(frames: Frames, start: Optional[date], end: Optional[date],
+                           bed_group: Optional[str], specialty: Optional[str]) -> dict:
+    key = ("dashboard", frames.run_id, start, end, bed_group, specialty)
+    return await cache.memoize(_kpi_cache, key,
+                               lambda: asyncio.to_thread(dashboard, frames, start, end, bed_group, specialty))
+
+
+async def cached_patients(frames: Frames, start: Optional[date], end: Optional[date], bed_group: Optional[str],
+                          specialty: Optional[str], page: int, size: int) -> dict:
+    key = ("patients", frames.run_id, start, end, bed_group, specialty, page, size)
+    return await cache.memoize(_kpi_cache, key,
+                               lambda: asyncio.to_thread(patients, frames, start, end, bed_group, specialty, page, size))
 
 
 def filter_options(frames: Frames) -> dict:

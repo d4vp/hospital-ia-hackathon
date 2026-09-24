@@ -1,7 +1,7 @@
 """Conversational agent: natural-language answers, tables and automatic charts.
 
-The technical detail (generated query, errors, timings) is returned by the API only to
-administrators and is shown folded in an expander.
+Generated database queries are never shown (nor returned by the API) to any role:
+they are kept only in the server-side audit log.
 """
 import pandas as pd
 import streamlit as st
@@ -11,10 +11,12 @@ from core.i18n import lang, t
 from core.icons import page_header
 from core.ui import api_call, chart_from_spec, show_table
 
+ENGINE_LABELS = {"llm": "engine_llm", "fallback": "engine_fallback", "guard": "engine_guard"}
+
 page_header(t("nav_agent"), "message", t("agent_intro"))
 st.session_state.setdefault("messages", [])
 
-if st.button(t("new_conversation"), icon=":material/add_comment:"):
+if st.button(f":material/add_comment: {t('new_conversation')}"):
     st.session_state["messages"] = []
     st.session_state.pop("conversation_id", None)
     st.rerun()
@@ -26,14 +28,11 @@ def render_answer(message: dict) -> None:
     if table:
         df = pd.DataFrame(table["rows"], columns=table["columns"])
         chart_from_spec(df, message.get("chart"))
-        with st.expander(t("result_table"), icon=":material/table:"):
+        with st.expander(t("result_table")):
             show_table(df)
     engine = message.get("engine")
-    if engine:
-        st.caption(t("engine_llm") if engine == "llm" else t("engine_fallback"))
-    if message.get("debug"):
-        with st.expander(t("technical_detail"), icon=":material/code:"):
-            st.json(message["debug"], expanded=False)
+    if engine in ENGINE_LABELS:
+        st.caption(t(ENGINE_LABELS[engine]))
 
 
 for message in st.session_state["messages"]:
@@ -63,6 +62,6 @@ if question:
         if response:
             st.session_state["conversation_id"] = response["conversation_id"]
             message = {"role": "assistant", "content": response["answer"], "table": response.get("table"),
-                       "chart": response.get("chart"), "engine": response.get("engine"), "debug": response.get("debug")}
+                       "chart": response.get("chart"), "engine": response.get("engine")}
             st.session_state["messages"].append(message)
             render_answer(message)
